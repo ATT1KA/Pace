@@ -60,6 +60,11 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 		Instance = this;
 	}
 
+	protected override void OnDestroy()
+	{
+		if ( Instance == this ) Instance = null; // don't leave a destroyed singleton dangling on scene reload
+	}
+
 	protected override void OnStart()
 	{
 		if ( Networking.IsHost )
@@ -96,6 +101,9 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 
 	public string NameOf( TennisScore.Side s ) =>
 		GetDuelist( s )?.Network.Owner?.DisplayName ?? (s == TennisScore.Side.A ? "Duelist A" : "Duelist B");
+
+	/// <summary> Host-authoritative mirror of the Umpire's last utterance, for late-joiner UI. </summary>
+	public void SetLastCall( string line ) { if ( Networking.IsHost ) LastCall = line; }
 
 	// ── Phase machine ─────────────────────────────────────────────
 
@@ -153,6 +161,10 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 			case MatchPhase.Changeover:
 			case MatchPhase.SetBreak:
 				if ( PhaseExpired() ) SetupNextPoint();
+				break;
+
+			case MatchPhase.MatchEnd:
+				if ( PhaseExpired() ) ReturnToLobby();
 				break;
 		}
 	}
@@ -254,11 +266,18 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 	{
 		// After the grace window, standing outside the resolve volume bleeds.
 		if ( _phaseTime < Tuning.ReckoningGrace ) return;
+
+		// Hard backstop: past the sudden-death cap the resolve volume COLLAPSES and
+		// pressure applies to everyone, so two duelists both standing at the heart
+		// can never hang the point (and the match) indefinitely.
+		bool collapsed = _phaseTime >= Tuning.ReckoningSuddenDeath;
+
 		foreach ( var side in new[] { TennisScore.Side.A, TennisScore.Side.B } )
 		{
 			var d = GetDuelist( side );
 			if ( d is null || !d.Vitals.Alive ) continue;
-			if ( Ground is not null && !Ground.InResolveVolume( d.WorldPosition ) )
+			bool outside = Ground is null || !Ground.InResolveVolume( d.WorldPosition );
+			if ( collapsed || outside )
 				d.Vitals.ApplyReckoningPressure( Tuning.ReckoningTickDmg * Time.Delta );
 		}
 	}
@@ -296,7 +315,7 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 
 		if ( result.MatchWinner is TennisScore.Side mw )
 		{
-			EnterPhase( MatchPhase.MatchEnd );
+			EnterPhase( MatchPhase.MatchEnd, Tuning.MatchEndHold );
 			BroadcastMatchEnd( mw == TennisScore.Side.A ? DuelistA : DuelistB );
 			MatchRecord.WriteResult( this, Score );
 			return;
@@ -305,7 +324,7 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 		if ( QuickFormat && result.GameWinner is TennisScore.Side gw )
 		{
 			// Callout format: one game IS the match.
-			EnterPhase( MatchPhase.MatchEnd );
+			EnterPhase( MatchPhase.MatchEnd, Tuning.MatchEndHold );
 			BroadcastMatchEnd( gw == TennisScore.Side.A ? DuelistA : DuelistB );
 			MatchRecord.WriteResult( this, Score );
 			return;
@@ -323,6 +342,34 @@ public sealed class MatchDirector : Component, Component.INetworkListener
 			BeginInitiativePick();
 		else
 			BeginApproach();
+	}
+
+	/// <summary>
+	/// End the match immediately as a walkover (mid-match disconnect). Called by
+	/// LobbySystem on the host. Runs the same MatchEnd → Lobby path as a natural
+	/// finish so the session never gets stranded, and records the forfeit honestly.
+	/// </summary>
+	public void ForfeitMatch( TennisScore.Side winner )
+	{
+		if ( !Networking.IsHost ) return;
+		if ( Phase is MatchPhase.Lobby or MatchPhase.MatchEnd ) return;
+
+		EnterPhase( MatchPhase.MatchEnd, Tuning.MatchEndHold );
+		BroadcastMatchEnd( winner == TennisScore.Side.A ? DuelistA : DuelistB );
+		MatchRecord.WriteForfeit( this, winner );
+	}
+
+	/// <summary> Victory ceremony over: reset match state and re-open the lobby for a new callout. </summary>
+	void ReturnToLobby()
+	{
+		DuelistA = Guid.Empty;
+		DuelistB = Guid.Empty;
+		_pendingPointWinner = null;
+		_reckoningBellRung = false;
+		PointClock = 0;
+		Score = new TennisScore( BestOfFive ? Tuning.SetsToWinFinal : Tuning.SetsToWinStandard, TennisScore.Side.A );
+		PushScore();
+		EnterPhase( MatchPhase.Lobby );
 	}
 
 	[Rpc.Broadcast]

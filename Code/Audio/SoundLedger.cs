@@ -49,6 +49,7 @@ public static class SoundLedger
 	{
 		public static Broadcaster Instance { get; private set; }
 		protected override void OnAwake() => Instance = this;
+		protected override void OnDestroy() { if ( Instance == this ) Instance = null; }
 
 		public void Emit( Guid sourceId, Vector3 pos, LedgerSound sound, float radius, string overrideEvent )
 		{

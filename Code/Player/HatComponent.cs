@@ -20,18 +20,37 @@ public sealed class HatComponent : Component
 
 	public void ResetForPoint()
 	{
+		// Host-authoritative synced truth (mirrors KnockOff's host-side write).
+		IsWorn = true;
+		// Presentation must be restored on EVERY client — SpawnLooseHat broadcast the
+		// knock-off (renderer off + loose prop) to all clients, so the reset has to
+		// broadcast too. Doing it host-only left remote clients with the worn hat hidden
+		// and a leaked loose_hat on the ground every point ("animation never lies" [LAW]).
+		BroadcastReset();
+	}
+
+	[Rpc.Broadcast]
+	void BroadcastReset()
+	{
 		_looseHat?.Destroy();
 		_looseHat = null;
-		IsWorn = true;
 		var r = Components.Get<ModelRenderer>( FindMode.EverythingInSelfAndChildren );
 		if ( r is not null ) r.Enabled = true;
 	}
 
-	/// <summary> World-space hat sphere for the deliberate hat-shot check. </summary>
+	/// <summary>
+	/// The deliberate hat-shot check — CROWN ONLY. The hat is a cap on the top of the
+	/// head: a hit qualifies only if it's near the socket axis horizontally AND at/above
+	/// the crown line. A face or front head shot lands lower and passes through to a
+	/// lethal head Perfect — the hat shrinks the instant-kill surface, it is not a shield.
+	/// </summary>
 	public bool IsHatShot( Vector3 hitPos )
 	{
 		if ( !IsWorn || Socket is null ) return false;
-		return hitPos.Distance( Socket.WorldPosition ) <= Tuning.HatShotRadius;
+		var socket = Socket.WorldPosition;
+		float horiz = (hitPos - socket).WithZ( 0 ).Length;
+		float vert = hitPos.z - socket.z;   // negative just below the socket top
+		return horiz <= Tuning.HatCrownRadius && vert >= -Tuning.HatCrownDrop;
 	}
 
 	public void KnockOff( Vector3 direction )

@@ -72,10 +72,11 @@ public sealed class CadenceTrainer : Component, IGunEvents
 			tr.GameObject.Destroy();
 			Sound.Play( "tp.bottle_shatter", tr.HitPosition );
 
-			// On-beat discipline is what the streak measures. A blooming shot
-			// that got lucky still hit — but earliness resets the streak, so
-			// the leaderboard measures COMPOSURE, not luck.
-			bool wasDisciplined = shooter.Gun.CurrentConeDegrees( 0f ) <= Tuning.ConePlantedHip * 1.5f;
+			// On-beat discipline is what the streak measures. A blooming shot that got
+			// lucky still hit — but its EARLINESS is fed in, so a slip-hammer shot has a
+			// wide cone and fails the check: the leaderboard measures COMPOSURE, not luck.
+			// (Passing 0f here evaluated every shot as if it were perfectly on-beat.)
+			bool wasDisciplined = shooter.Gun.CurrentConeDegrees( shooter.Gun.LastShotEarliness ) <= Tuning.ConePlantedHip * 1.5f;
 			if ( wasDisciplined )
 			{
 				Streak += justFrame ? 2 : 1;

@@ -21,13 +21,15 @@ public sealed class Umpire : Component
 	[Property] public SoundEvent CrowdSting { get; set; }
 
 	protected override void OnAwake() => Instance = this;
+	protected override void OnDestroy() { if ( Instance == this ) Instance = null; }
 
 	// ── Core speech path ──────────────────────────────────────────
 	[Rpc.Broadcast]
 	public void Say( string line, UmpireTone tone = UmpireTone.Neutral )
 	{
-		if ( MatchDirector.Instance is not null )
-			typeof(MatchDirector).GetProperty( nameof(MatchDirector.LastCall) ); // UI mirrors via event below
+		// Host writes the synced mirror so late-joiners see the last call (the live HUD
+		// updates from the event below). Was a discarded reflection lookup — a no-op.
+		MatchDirector.Instance?.SetLastCall( line );
 
 		ISceneEvent<IUmpireEvents>.Post( x => x.OnUmpireCall( line, tone ) );
 		// VO hook: Sound.Play( VoiceBank.Resolve( line ) ) once the voice bank exists.

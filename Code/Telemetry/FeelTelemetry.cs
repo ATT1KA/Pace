@@ -28,11 +28,13 @@ public sealed class FeelTelemetry : Component
 {
 	public static FeelTelemetry Instance { get; private set; }
 	protected override void OnAwake() => Instance = this;
+	protected override void OnDestroy() { if ( Instance == this ) Instance = null; }
 
 	// ── Per-match aggregates ──────────────────────────────────────
 	readonly Dictionary<Guid, PlayerAgg> _players = new();
 	readonly List<PointLog> _points = new();
 	PointLog _current;
+	bool _pointActive;
 
 	sealed class PlayerAgg
 	{
@@ -42,6 +44,7 @@ public sealed class FeelTelemetry : Component
 		public int ShellsLoaded, HatShots, TricksUsed;
 		public double EarlinessSum, EarlinessSumWounded;
 		public int ShotsWounded;
+		public int BestTrainerStreak;
 	}
 
 	struct PointLog
@@ -61,11 +64,17 @@ public sealed class FeelTelemetry : Component
 
 	// ── Hooks (called from gameplay code) ─────────────────────────
 
-	public void OnPointStart( TennisScore score ) =>
+	public void OnPointStart( TennisScore score )
+	{
 		_current = new PointLog { ScoreBefore = score.Serialize() };
+		_pointActive = true;
+	}
 
 	public void OnPointEnd( TennisScore.Side winner, float duration, HitZone zone )
 	{
+		// Guard against an end without a start (edge phases) logging a default PointLog.
+		if ( !_pointActive ) return;
+		_pointActive = false;
 		_current.Winner = winner; _current.Duration = duration; _current.EndZone = zone;
 		_points.Add( _current );
 	}
@@ -93,7 +102,8 @@ public sealed class FeelTelemetry : Component
 	public void OnShellLoaded( DuelistController d, int loaded ) => Agg( d ).ShellsLoaded++;
 	public void OnHatShot( DuelistController shooter, DuelistController victim ) => Agg( shooter ).HatShots++;
 	public void OnTrickUsed( DuelistController d, TrickId t ) => Agg( d ).TricksUsed++;
-	public void OnTrainerStreak( DuelistController d, int streak, bool justFrame ) { /* range leaderboard path */ }
+	public void OnTrainerStreak( DuelistController d, int streak, bool justFrame ) =>
+		Agg( d ).BestTrainerStreak = Math.Max( Agg( d ).BestTrainerStreak, streak ); // range leaderboard → flushed with the match report
 
 	// ── Flush at match end ────────────────────────────────────────
 
@@ -109,11 +119,12 @@ public sealed class FeelTelemetry : Component
 				kv => new
 				{
 					kv.Value.Shots, kv.Value.OnBeat, kv.Value.JustFrames, kv.Value.EarlyFires,
-					composure = kv.Value.Shots > 0 ? 1.0 - (kv.Value.EarlinessSum / kv.Value.Shots) : 1.0,
-					composureWounded = kv.Value.ShotsWounded > 0 ? 1.0 - (kv.Value.EarlinessSumWounded / kv.Value.ShotsWounded) : 1.0,
+					composure = kv.Value.Shots > 0 ? Math.Clamp( 1.0 - (kv.Value.EarlinessSum / kv.Value.Shots), 0.0, 1.0 ) : 1.0,
+					composureWounded = kv.Value.ShotsWounded > 0 ? Math.Clamp( 1.0 - (kv.Value.EarlinessSumWounded / kv.Value.ShotsWounded), 0.0, 1.0 ) : 1.0,
 					plantedShotRate = kv.Value.Shots > 0 ? (double)kv.Value.PlantedShots / kv.Value.Shots : 0,
 					kv.Value.Plants, kv.Value.Slides, kv.Value.SlidePlants, kv.Value.MantleFeints,
 					kv.Value.Feints, kv.Value.Flourishes, kv.Value.ShellsLoaded, kv.Value.HatShots, kv.Value.TricksUsed,
+					kv.Value.BestTrainerStreak,
 				} ),
 			// Broadcast layer / beta dashboard: theoretical match prob at observed per-point split
 			winProbCheck = _points.Count > 0
@@ -171,6 +182,9 @@ public static class MatchRecord
 			forfeit = true,
 		};
 		Persist( entry );
+		// Flush telemetry on forfeit too — otherwise a walkover match is never persisted
+		// and its aggregates bleed into the next match's numbers.
+		FeelTelemetry.Instance?.Flush( director );
 	}
 
 	static void Persist( object entry )

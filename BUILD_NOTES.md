@@ -122,3 +122,49 @@ Crucially, its difficulty knobs are *discipline knobs* (beat-waiting rate, plant
 This codebase is the complete mechanical implementation of both documents — every system, every law, every named technique — architected for s&box's scene system (Components, `[Sync]`, `[Rpc.*]`, Razor panels) and organized so that all tuning lives in one hot-reloadable file. The scoring core is compiled and proven in this environment. The remainder of the code targets the s&box API as of early 2026; s&box's API moves quickly, so the first task on an engine-connected machine is a compile pass (expect mechanical fixes — property renames, not design changes), followed by greybox scenes wiring the prefabs this code expects (duelist prefab with controller/vitals/revolver/hat, a Ground with gates and rigs, the singleton objects: MatchDirector, Umpire, Ledger Broadcaster, Telemetry, Auditor, HUD).
 
 What stands between this and a playable beta is, in order: the compile pass, two greybox Grounds, the animation set, and the sound bank. What does *not* stand between this and beta is design work — every decision has been made, recorded, and where possible, proven.
+
+---
+
+## VI. Beta-Hardening Pass — Audit Fixes (post-build)
+
+*A full-codebase audit ahead of beta — combat/player, core/net/telemetry, and audio/grounds/bot/UI, cross-referenced against `Tuning.cs` and the laws — surfaced two critical bugs, a set of high-severity correctness/authority defects, and several inert "flagship" systems (coded but doing nothing). All code-side fixes have landed. The design is unchanged except one recorded amendment (the hat, §VI.3). Nothing here contradicts the ground-truth documents; it makes the code finally tell their truth. The remaining launch gap is still the compile pass + greybox scenes + sound bank (§V) — this pass did not touch that.*
+
+### 1. Critical & match-breaking (multiplayer correctness)
+
+| System | Was | Now |
+|---|---|---|
+| **Tricks** (`Tricks.cs`, `Revolver.cs`) | `new GameObject` spawned client-locally; a non-host player's thrown **knife never damaged** (object never reached the host) and a **vial's smoke was invisible to the opponent** | `UseTrick` routes through an `[Rpc.Host]`; the host spawns, simulates, and **NetworkSpawns** every trick object, resolves knife damage host-side, and the smoke volume + presentation exist on all clients |
+| **Kill hitstop** (`ScreenEffects.cs`) | window measured in *scaled* time while `TimeScale=0.02` → the one-hitstop [LAW] froze the world ~2 seconds | measured in real (unscaled) time → the intended 40 ms |
+| **Set history** (`TennisScore.cs`) | `List<(int,int)>` — `System.Text.Json` silently dropped the tuple's fields, so every synced scorecard and every line of **The Record** came out blank | a `SetScore` struct with real properties (implicit tuple conversion preserves call sites); round-trip now covered by a test |
+| **MatchEnd** (`MatchDirector.cs`) | terminal deadlock — no duration, no switch case, no reset; the session stuck after one match | timed victory ceremony → `ReturnToLobby` with full score/seat/duelist reset |
+| **Reckoning** (`MatchDirector.cs`) | two duelists both standing at the heart bled no one → the point (and match) hung forever | the resolve volume **collapses** past `ReckoningSuddenDeath` (12s) — pressure then applies to everyone; a stand-in always resolves |
+| **Walkover** (`LobbySystem.cs`, `FeelTelemetry.cs`) | forfeit recorded, but the Director kept running with a null duelist; telemetry never flushed; a stale pre-match ready-seat blocked all future starts | disconnect calls `MatchDirector.ForfeitMatch` (ends the match the normal way + flushes telemetry); ready-seats self-heal |
+| **Hat reset** (`HatComponent.cs`) | host-only, so remote clients kept the worn hat hidden and leaked the loose-hat prop every point — an "animation never lies" [LAW] violation | the per-point reset broadcasts (mirroring the knock-off), restoring the worn hat and clearing the prop on every client |
+
+### 2. Inert flagship systems, made real
+
+- **Form range falloff** (`Revolver.cs`, `FormDefinition.cs`): `EffectiveRange`/`BeyondRangeConeAdd` were authored per-Form but never read — all Forms behaved identically at range. The cone now opens past the Form's effective range, giving **Deadeye** its reach and **Fanning** its short-range knee. (`FormDef` is also cached now instead of re-allocated every tick.)
+- **The Stranger** (`DrillBot.cs`): `BeatDiscipline` was dead (`BotBeatReady() => true`) and the bot never held Aim or Attack — it could never wait for the beat, never reach the planted-aimed 0° TRUE cone, and a Fanning bot could never fan. It now reads the real beat clock and drives Aim/Fan through the same input shim a human uses. **No aimbot** still holds — it only steers `EyeAngles`, never injects a shot vector.
+- **Bot input shim** (`DuelistController.cs`): `ActionPressed` consumed the press on first read (`HashSet.Remove`), so any action read twice a tick broke for bots — bots literally could not mantle. Double-buffered so a press is visible to every reader within the tick.
+- **Cadence Trainer** (`CadenceTrainer.cs`): the streak evaluated every shot as if perfectly on-beat (earliness hard-coded 0), so the Metronome Test it exists to teach wasn't measured. It now feeds the shot's actual earliness — a slip-hammer shot breaks the streak.
+- **Honesty Auditor** (`HonestyAuditor.cs`): two of the four advertised audits (Animation Truth, Bot Parity) were unimplemented. Added: Animation-Truth as state-consistency (aiming/reloading while holstered is a lie), and Bot-Parity as ledger-component parity. Slack moved to `Tuning`; violation log ring-buffered.
+
+### 3. Design amendment — the Hat
+
+The hat was blanket headshot immunity: any hit within 7u of the socket became a zero-damage graze, eating even a genuine head Perfect. Amended (and recorded here as the decision): **the hat protects the crown only** — a face/front head shot is still a one-shot kill — and a crown hit **absorbs half the incoming damage** as the hat is knocked off. It shrinks the instant-headshot surface at match start; it is not sustainable protection. The heart disc is unchanged (and now correctly front-of-chest — see below).
+
+### 4. Correctness & law-consistency
+
+- **Heart hitbox** (`Vitals.cs`): the forward offset was a `*0f` placeholder, so the heart was radially symmetric — a back shot killed like a chest shot. It's now a front-of-chest disc; a back shot at the same height is a Body hit.
+- **Tuning single-source-of-truth**: the test's shadow copy of the elite KPI (`Tuning2`) is gone — it references the real `Tuning.TargetElitePerPointWinrate`/`TargetAdjacentPerPointWinrate`. Feel-critical numbers that had leaked into code (the entire hit-zone geometry, landing-bloom magnitude, wound saturation, trick offsets/speeds, auditor slack, ceremony grade) were pulled back into the Book of Numbers so they hot-reload.
+- **Tiebreak initiative** (`TennisScore.cs`): entering the breaker now passes first serve to the side that didn't serve game 12 (tennis-correct; was a cosmetic off-by-one in the call).
+- **`LastCall`** (`Umpire.cs`): the synced umpire mirror was written by a discarded reflection lookup (a no-op) — now host-written so late-joiners see the last call.
+- **Robustness**: singleton `Instance` cleared on destroy (Director/Umpire/Telemetry/Ledger); `GetGate` null-slot guard; composure clamped; point-log guarded against an end-without-start; wound grade auto-provides its post-process; crosshair breathing raised 4→30 Hz.
+
+### 5. Test battery — expanded
+
+`Tests/ScoreTest.cs` gained the highest-value missing coverage: a **serialize→deserialize round-trip** (the guard that would have caught the set-history bug), best-of-five, deuce/advantage score-calling, break-point-at-deuce, and tiebreak-initiative. The existing 20 rules assertions + Monte Carlo are unchanged. (Not re-run in this environment — no .NET toolchain here; run `/scoretest` on the engine machine.)
+
+### 6. New `Tuning.cs` constants (all `[BASELINE]`)
+
+Hit-zone geometry (`ZoneHead/Heart/Body/Graze*`), the hat crown (`HatCrownRadius`, `HatCrownDrop`, `HatAbsorbFraction`), `LandBloomCone`, `RangeFalloffMaxMult`, trick numerics (`Trick*Offset`, `*Radius`, `Coin/Vial ThrowLift/Speed`, `KnifeGravity/Lifetime`), Reckoning `SuddenDeath`, `MatchEndHold`, wound grade, and auditor slack — the levers this pass touched now all live where beta tuning expects them.

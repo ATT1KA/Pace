@@ -94,6 +94,45 @@ class ScoreTest
 		s.AwardPoint( TennisScore.Side.B );
 		Assert( s.CallScore( "Cole", "Reyes" ) == "Fifteen — all", "call check" );
 
+		// 10. Serialization round-trip preserves set history AND live state.
+		//     This is the guard for the ValueTuple-drops-set-history bug: a tuple list
+		//     round-trips as [(0,0)], a SetScore list survives.
+		s = new TennisScore( 2, TennisScore.Side.A );
+		for ( int g = 0; g < 6; g++ ) WinGame( s, TennisScore.Side.A );                                       // set 1: 6-0
+		for ( int g = 0; g < 3; g++ ) { WinGame( s, TennisScore.Side.A ); WinGame( s, TennisScore.Side.B ); } // set 2: 3-3
+		var round = TennisScore.Deserialize( s.Serialize() );
+		Assert( round.SetHistory.Count == 1 && round.SetHistory[0].a == 6 && round.SetHistory[0].b == 0, "set history survives serialization" );
+		Assert( round.Games[0] == 3 && round.Games[1] == 3 && round.Sets[0] == 1, "live game/set state survives serialization" );
+
+		// 11. Best-of-five (SetsToWin=3) needs three sets, not two.
+		s = new TennisScore( 3, TennisScore.Side.A );
+		for ( int set = 0; set < 2; set++ )
+			for ( int g = 0; g < 6; g++ ) r = WinGame( s, TennisScore.Side.A );
+		Assert( !s.MatchOver, "two sets does not win best-of-five" );
+		for ( int g = 0; g < 6; g++ ) r = WinGame( s, TennisScore.Side.A );
+		Assert( r.MatchWinner.HasValue && s.MatchOver, "three sets wins best-of-five" );
+
+		// 12. Deuce / Advantage score calling.
+		s = new TennisScore( 2, TennisScore.Side.A );
+		for ( int i = 0; i < 3; i++ ) { s.AwardPoint( TennisScore.Side.A ); s.AwardPoint( TennisScore.Side.B ); }
+		Assert( s.CallScore( "Cole", "Reyes" ) == "Deuce", "deuce called" );
+		s.AwardPoint( TennisScore.Side.A );
+		Assert( s.CallScore( "Cole", "Reyes" ) == "Advantage, Cole", "advantage called" );
+
+		// 13. From deuce, the receiver's game point is a BREAK point.
+		s = new TennisScore( 2, TennisScore.Side.A );   // A holds Initiative
+		for ( int i = 0; i < 3; i++ ) { s.AwardPoint( TennisScore.Side.A ); s.AwardPoint( TennisScore.Side.B ); }
+		s.AwardPoint( TennisScore.Side.B );             // advantage B (the receiver)
+		st = s.NextPointStakes();
+		Assert( st.GamePointFor.HasValue && st.GamePointFor.Value == TennisScore.Side.B && st.IsBreakPoint, "advantage-receiver is a break point" );
+
+		// 14. Entering the tiebreak passes first serve to the side that didn't serve game 12.
+		s = new TennisScore( 2, TennisScore.Side.A );   // A serves game 1 (odd games A, even games B)
+		for ( int g = 0; g < 5; g++ ) { WinGame( s, TennisScore.Side.A ); WinGame( s, TennisScore.Side.B ); }
+		WinGame( s, TennisScore.Side.A );               // 6-5, A served game 11
+		r = WinGame( s, TennisScore.Side.B );           // 6-6, B served game 12 → tiebreak
+		Assert( r.EnteredTiebreak && s.Initiative == TennisScore.Side.A, "tiebreak opens with the non-server of game 12" );
+
 		Console.WriteLine( "\n== MONTE CARLO vs CLOSED FORM (100,000 matches per p) ==" );
 		Console.WriteLine( "  The Design Document's central wager, verified:\n" );
 		Console.WriteLine( "   p/point | game(cf) | set(cf) | match(cf) | match(sim) " );
@@ -112,10 +151,10 @@ class ScoreTest
 
 		// The dual mandate, as numbers:
 		double fair = TennisScore.MatchWinProbability( 0.50 );
-		double elite = TennisScore.MatchWinProbability( Tuning2.TargetElite );
+		double elite = TennisScore.MatchWinProbability( Tuning.TargetElitePerPointWinrate );
 		Assert( Math.Abs( fair - 0.5 ) < 1e-9, $"average vs average = {fair:F4} (the 50-50 guarantee)" );
 		Assert( elite > 0.999, $"elite vs novice (p=.75) = {elite:F6} (the near-certainty guarantee)" );
-		double adjacent = TennisScore.MatchWinProbability( 0.535 );
+		double adjacent = TennisScore.MatchWinProbability( Tuning.TargetAdjacentPerPointWinrate );
 		Console.WriteLine( $"\n  adjacent-percentile (p=.535) match winrate: {adjacent:F3} — skill visible, upsets alive" );
 
 		Console.WriteLine( fails == 0 ? "\nALL TESTS PASSED" : $"\n{fails} FAILURES" );
@@ -139,6 +178,4 @@ class ScoreTest
 			s.AwardPoint( rng.NextDouble() < p ? TennisScore.Side.A : TennisScore.Side.B );
 		return s.Winner.HasValue && s.Winner.Value == TennisScore.Side.A;
 	}
-
-	class Tuning2 { public const double TargetElite = 0.75; }
 }
