@@ -43,9 +43,10 @@ public sealed class GroundDefinition : Component
 	public Transform GetGate( TennisScore.Side side, int index )
 	{
 		var list = side == TennisScore.Side.A ? GatesSideA : GatesSideB;
-		if ( list.Count == 0 ) return new Transform( WorldPosition + (side == TennisScore.Side.A ? Vector3.Forward : Vector3.Backward) * 400f );
+		var fallback = new Transform( WorldPosition + (side == TennisScore.Side.A ? Vector3.Forward : Vector3.Backward) * 400f );
+		if ( list.Count == 0 ) return fallback;
 		var go = list[index.Clamp( 0, list.Count - 1 )];
-		return go.WorldTransform;
+		return go is not null ? go.WorldTransform : fallback; // empty inspector slot → fallback, not an NRE
 	}
 
 	public void ApplyHour( GroundHour hour )

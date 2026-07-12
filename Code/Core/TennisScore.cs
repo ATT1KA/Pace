@@ -31,8 +31,12 @@ public sealed class TennisScore
 	[JsonInclude] public bool  MatchOver  { get; private set; }
 	[JsonInclude] public Side? Winner     { get; private set; }
 
-	// Set history for the scorecard / the Record (games won per completed set)
-	[JsonInclude] public System.Collections.Generic.List<(int a, int b)> SetHistory { get; private set; } = new();
+	// Set history for the scorecard / the Record (games won per completed set).
+	// NOTE: element type is SetScore, NOT (int a, int b) — System.Text.Json does not
+	// serialize ValueTuple's public FIELDS, so a tuple list round-trips as [(0,0),…]
+	// and every synced scorecard / Record line comes out blank. SetScore uses real
+	// properties so it survives Serialize()/Deserialize().
+	[JsonInclude] public System.Collections.Generic.List<SetScore> SetHistory { get; private set; } = new();
 
 	public TennisScore() : this( Tuning.SetsToWinStandard, Side.A ) { }
 
@@ -99,10 +103,10 @@ public sealed class TennisScore
 				}
 			}
 
-			// Initiative alternates every game (in a tiebreak, tennis alternates
-			// serve every two points; we keep the simpler per-game rule inside
-			// tiebreaks too via the point-pair rule below).
-			if ( !MatchOver && !InTiebreak )
+			// Initiative alternates every game. Entering the tiebreak also flips once:
+			// the player who did NOT "serve" game 12 opens the breaker (then the
+			// point-pair rule below alternates serve every two points, tennis-correct).
+			if ( !MatchOver && (!InTiebreak || result.EnteredTiebreak) )
 				Initiative = Other( Initiative );
 
 			// Changeover after odd total games within a set (tennis law).
@@ -254,6 +258,21 @@ public sealed class TennisScore
 		for ( int i = 1; i <= k; i++ ) r = r * (n - k + i) / i;
 		return r;
 	}
+}
+
+/// <summary>
+/// One completed set's game score (e.g. 6-4). A struct with real properties so it
+/// survives System.Text.Json — the ValueTuple it replaced did not (its data lives in
+/// public fields, which the serializer skips by default). Lowercase a/b preserve the
+/// existing <c>.a</c>/<c>.b</c> call sites; the implicit tuple conversion preserves
+/// <c>SetHistory.Add( (x, y) )</c>.
+/// </summary>
+public struct SetScore
+{
+	public int a { get; set; }
+	public int b { get; set; }
+	public SetScore( int a, int b ) { this.a = a; this.b = b; }
+	public static implicit operator SetScore( (int a, int b) t ) => new SetScore( t.a, t.b );
 }
 
 public struct PointResult

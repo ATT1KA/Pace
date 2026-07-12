@@ -43,13 +43,25 @@ public sealed class Vitals : Component
 
 		var zone = ClassifyZone( hitPos );
 
-		// Hat shot: precise no-damage psychological event — its own ledger entry.
+		// Crown hat shot: the hat ABSORBS HALF the shot and is knocked off — it is not
+		// a no-damage event and not armor. A head Perfect through the crown becomes a
+		// ~50 wound; the next head shot (hat gone) is lethal. Shrinks the instant-kill
+		// surface at match start, nothing more.
 		if ( Duelist.Hat is not null && Duelist.Hat.IsHatShot( hitPos ) )
 		{
 			Duelist.Hat.KnockOff( (hitPos - shooter.EyePosition).Normal );
 			BroadcastHatShot( shooter.GameObject.Id );
 			FeelTelemetry.Instance?.OnHatShot( shooter, Duelist );
-			return HitZone.Graze;
+
+			float full = zone switch
+			{
+				HitZone.Perfect => Tuning.PerfectDamage,
+				HitZone.Body    => wasKnife ? Tuning.KnifeBodyDamage : Tuning.BodyDamage,
+				_               => 0f,
+			};
+			if ( full > 0f )
+				ApplyDamage( full * Tuning.HatAbsorbFraction, shooter, wasKnife ? HitZone.Knife : zone );
+			return HitZone.Graze; // still the hat-shot event for presentation
 		}
 
 		switch ( zone )
@@ -61,7 +73,8 @@ public sealed class Vitals : Component
 				return HitZone.Graze;
 
 			case HitZone.Perfect:
-				ApplyDamage( wasKnife ? Tuning.PerfectDamage : Tuning.PerfectDamage, shooter, wasKnife ? HitZone.Knife : HitZone.Perfect );
+				// Knife-perfect is lethal too, so the number is identical — only the zone label differs.
+				ApplyDamage( Tuning.PerfectDamage, shooter, wasKnife ? HitZone.Knife : HitZone.Perfect );
 				return HitZone.Perfect;
 
 			case HitZone.Body:
@@ -121,19 +134,25 @@ public sealed class Vitals : Component
 	{
 		float z = hitPos.z - WorldPosition.z;
 
-		// Perfect zone: head (top of capsule) or heart (small chest disc)
-		bool head = z > 58f;
-		bool heart = z is > 44f and < 54f
-			&& (hitPos - (WorldPosition + Duelist.EyeRotation.Forward * 0f + Vector3.Up * 49f)).WithZ( 0 ).Length < 6f;
+		// Perfect zone: head (top of capsule) or heart (small chest disc).
+		bool head = z > Tuning.ZoneHeadMinZ;
+		// The heart is a disc on the FRONT of the chest — offset forward along the facing
+		// (flattened to horizontal). A back shot to the same height falls through to Body,
+		// not an instant kill. (The forward term was previously a *0f placeholder.)
+		var heartCenter = WorldPosition
+			+ Duelist.EyeRotation.Forward.WithZ( 0 ).Normal * Tuning.ZoneHeartForward
+			+ Vector3.Up * Tuning.ZoneHeartHeight;
+		bool heart = z is > Tuning.ZoneHeartMinZ and < Tuning.ZoneHeartMaxZ
+			&& (hitPos - heartCenter).WithZ( 0 ).Length < Tuning.ZoneHeartRadius;
 		if ( head || heart ) return HitZone.Perfect;
 
 		// Inside the body capsule?
 		var toHit = (hitPos - WorldPosition).WithZ( 0 ).Length;
-		if ( toHit <= Duelist.Body.Radius + 1f && z >= 0 && z <= 72f )
+		if ( toHit <= Duelist.Body.Radius + Tuning.ZoneBodyMargin && z >= 0 && z <= Tuning.ZoneBodyMaxZ )
 			return HitZone.Body;
 
 		// Graze shell — outer capsule
-		if ( toHit <= Duelist.Body.Radius * Tuning.GrazeCapsuleScale && z >= -2f && z <= 76f )
+		if ( toHit <= Duelist.Body.Radius * Tuning.GrazeCapsuleScale && z >= Tuning.ZoneGrazeMinZ && z <= Tuning.ZoneGrazeMaxZ )
 			return HitZone.Graze;
 
 		return HitZone.Miss;

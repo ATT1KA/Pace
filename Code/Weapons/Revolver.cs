@@ -33,6 +33,13 @@ public sealed class Revolver : Component
 	public bool IsDrawnOrDrawing => HandState is HandState.Drawn or HandState.Drawing;
 	public float CameraRecoilPitch { get; private set; }
 
+	// ── Read-only cadence/aim state (the bot reads these to earn its shot the
+	//    same way a human does — never an aim shortcut) ──
+	public bool  BeatReady    => _sinceLastShot >= FormDef.TrueBeatInterval; // firing now is on-beat (earliness 0)
+	public bool  IsAimSettled => IsAiming && _aimBlend > 0.85f;              // the raise has reached the TRUE cone
+	public bool  IsFanning    => _fanQueued > 0;
+	public float LastShotEarliness { get; private set; }                     // earliness of the most recent shot
+
 	DuelistController Duelist => Components.GetInParentOrSelf<DuelistController>();
 
 	// hammer / cadence
@@ -66,7 +73,17 @@ public sealed class Revolver : Component
 		SyncFormDef();
 	}
 
-	void SyncFormDef() => FormDef = FormDefinition.Baseline( Form ); // asset lookup replaces this when .form files ship
+	FormId _formDefFor = (FormId)(-1);
+	// Rebuild the FormDef only when the synced Form actually changes (loadout swap),
+	// not every FixedUpdate — Baseline() allocates, and at 128 tick that was constant
+	// GC churn for a value that changes once a changeover. Still called per-tick so the
+	// owner picks up a synced Form change, but now it early-returns cheaply.
+	void SyncFormDef()
+	{
+		if ( FormDef is not null && _formDefFor == Form ) return;
+		FormDef = FormDefinition.Baseline( Form ); // asset lookup replaces this when .form files ship
+		_formDefFor = Form;
+	}
 
 	protected override void OnStart() => SyncFormDef();
 
@@ -232,7 +249,7 @@ public sealed class Revolver : Component
 
 	// ── The accuracy matrix — one function, the whole gospel ──────
 
-	public float CurrentConeDegrees( float earliness, bool fanning = false )
+	public float CurrentConeDegrees( float earliness, bool fanning = false, float targetDistance = 0f )
 	{
 		float cone;
 		bool planted = Duelist.CountsAsPlanted;
@@ -246,11 +263,21 @@ public sealed class Revolver : Component
 
 		cone *= FormDef.ConeScale;
 
+		// Form range falloff: past the Form's effective range the cone opens up. This is
+		// the lever that gives Deadeye its reach (2400u knee, gentle add) and makes Fanning
+		// a short-range animal (700u knee, steep add). Distance 0 = no falloff (e.g. the
+		// crosshair, which shows the near-range cone).
+		if ( targetDistance > FormDef.EffectiveRange && FormDef.EffectiveRange > 0f )
+		{
+			float over = (targetDistance - FormDef.EffectiveRange) / FormDef.EffectiveRange;
+			cone += FormDef.BeyondRangeConeAdd * MathF.Min( over, Tuning.RangeFalloffMaxMult );
+		}
+
 		// slip-hammer: early fire blooms on a deterministic curve
 		cone += Tuning.EarlyFireMaxBloom * MathF.Pow( earliness, Tuning.BeatBloomExponent );
 
 		// landing bloom
-		if ( Duelist.HasLandingBloom ) cone += 3f;
+		if ( Duelist.HasLandingBloom ) cone += Tuning.LandBloomCone;
 		// flinch from being hit
 		cone += _flinch;
 
@@ -305,7 +332,11 @@ public sealed class Revolver : Component
 		var origin = Duelist.EyePosition;
 		var baseDir = Duelist.EyeRotation.Forward;
 
-		float cone = CurrentConeDegrees( earliness, fanning );
+		LastShotEarliness = earliness;
+
+		// Estimate range to whatever is down the barrel so the Form's range falloff can apply.
+		float targetDistance = EstimateTargetDistance( origin, baseDir );
+		float cone = CurrentConeDegrees( earliness, fanning, targetDistance );
 		Vector3 dir = ApplyDeterministicSpread( baseDir, cone, _shotIndex );
 
 		// presentation, everywhere
@@ -321,6 +352,15 @@ public sealed class Revolver : Component
 		// adjudication on host
 		if ( Networking.IsHost ) AdjudicateShot( origin, dir );
 		else RequestAdjudication( origin, dir );
+	}
+
+	float EstimateTargetDistance( Vector3 origin, Vector3 dir )
+	{
+		var tr = Scene.Trace.Ray( origin, origin + dir * 100000f )
+			.IgnoreGameObjectHierarchy( GameObject )
+			.WithoutTags( "loose_hat" )
+			.Run();
+		return tr.Hit ? tr.Distance : 100000f;
 	}
 
 	static Vector3 ApplyDeterministicSpread( Vector3 dir, float coneDeg, int index )
@@ -429,8 +469,15 @@ public sealed class Revolver : Component
 	void UseTrick()
 	{
 		TrickSpent = true;
-		Tricks.Execute( Trick, Duelist );
+		RequestTrick(); // host spawns/simulates the trick authoritatively
 	}
+
+	// The trick object must be host-authoritative (its damage/smoke are gameplay, not
+	// just presentation) and NetworkSpawned so every client sees it. Spawning it on the
+	// caller's client — as the old code did — meant a non-host knife never reached the
+	// host to deal damage, and a vial's smoke never appeared for the opponent.
+	[Rpc.Host]
+	void RequestTrick() => Tricks.Execute( Trick, Duelist );
 
 	// ── External hooks ────────────────────────────────────────────
 

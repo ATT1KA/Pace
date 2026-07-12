@@ -203,7 +203,9 @@
 
     protected override int BuildHash() => HashCode.Combine(
         Phase, Director?.ScoreJson, LoadedShells, IsReloading,
-        LocalDuelist?.IsPlanted, (int)(Time.Now * 4) );
+        // 30Hz (was 4Hz): the honest crosshair breathes smoothly with the cone instead of
+        // stepping in 250ms jumps the CSS transition couldn't hide.
+        LocalDuelist?.IsPlanted, (int)(Time.Now * 30) );
 }
 
 /// <summary> Bridges scene events into the panel. </summary>

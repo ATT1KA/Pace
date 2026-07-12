@@ -67,8 +67,10 @@ public sealed class LobbySystem : Component, Component.INetworkListener
 			if ( d is not null && d.Network.Owner == conn )
 			{
 				Umpire.Instance?.Say( $"{conn.DisplayName} has left the grounds. Walkover.", UmpireTone.Grave );
-				// Award remaining match via forfeit — recorded as such.
-				MatchRecord.WriteForfeit( director, TennisScore.Other( side ) );
+				// End the match through the normal MatchEnd → Lobby path (also records the
+				// forfeit + flushes telemetry). Without this the Director keeps running in a
+				// phase with a null duelist and the session strands.
+				director.ForfeitMatch( TennisScore.Other( side ) );
 			}
 		}
 	}
@@ -81,6 +83,14 @@ public sealed class LobbySystem : Component, Component.INetworkListener
 		// Ready-up: any duelist presses Ready; first two claim the seats.
 		if ( !IsProxy && Input.Pressed( "Ready" ) )
 			RequestReady();
+
+		if ( Networking.IsHost )
+		{
+			// Self-heal stale ready seats: a readied player who disconnects leaves a Guid
+			// that no longer resolves, which would otherwise block every future start.
+			if ( ReadyA != Guid.Empty && Scene.Directory.FindByGuid( ReadyA ) is null ) ReadyA = Guid.Empty;
+			if ( ReadyB != Guid.Empty && Scene.Directory.FindByGuid( ReadyB ) is null ) ReadyB = Guid.Empty;
+		}
 
 		if ( Networking.IsHost && ReadyA != Guid.Empty && ReadyB != Guid.Empty )
 		{

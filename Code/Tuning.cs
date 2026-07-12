@@ -64,6 +64,8 @@ public static class Tuning
 	public const float JustFrameWindow   = 0.05f;       // [LAW] connoisseur window, no stat bonus
 	public const float EarlyFireMaxBloom = 14f;         // degrees of cone at maximally-early slip-hammer
 	public const float BeatBloomExponent = 1.6f;        // earliness→bloom curve shape
+	public const float LandBloomCone     = 3f;          // degrees added to the cone during LandBloomTime
+	public const float RangeFalloffMaxMult = 3f;        // caps the Form range-falloff cone add (× BeyondRangeConeAdd)
 
 	// Accuracy matrix (cone half-angle, degrees) — Feel Doc §III Plant × Aim
 	public const float ConeMovingHip     = 6.5f;
@@ -117,9 +119,30 @@ public static class Tuning
 	public const float HeartbeatVolume   = 0.6f;        // private to the wounded player [LAW]
 	public const float GrazeCapsuleScale = 1.18f;       // outer graze shell around hit capsule
 
-	// The hat
+	// Hit-zone geometry (local, relative to the duelist origin) — Feel Doc §VI.
+	// [BASELINE] the geometry that decides Perfect / Body / Graze; feel-critical, so it
+	// lives here in the Book of Numbers rather than as literals in Vitals.
+	public const float ZoneHeadMinZ      = 58f;         // above this = head (Perfect)
+	public const float ZoneHeartMinZ     = 44f;         // heart band, low
+	public const float ZoneHeartMaxZ     = 54f;         // heart band, high
+	public const float ZoneHeartHeight   = 49f;         // heart disc center height
+	public const float ZoneHeartRadius   = 6f;          // heart disc radius
+	public const float ZoneHeartForward  = 8f;          // forward offset into the CHEST — front-of-torso
+	                                                    // disc (a back shot to the same height is Body)
+	public const float ZoneBodyMaxZ      = 72f;         // top of the body capsule
+	public const float ZoneBodyMargin    = 1f;          // capsule radius slack for a body hit
+	public const float ZoneGrazeMinZ     = -2f;
+	public const float ZoneGrazeMaxZ     = 76f;
+
+	// The hat — a crown cap, not armor. It shrinks the instant-headshot surface area at
+	// match start; it is NOT sustainable protection. A face/front head shot ignores it.
 	public const float HatKnockChanceGraze = 0.55f;
-	public const float HatShotRadius       = 7f;        // deliberate hat-shot precision
+	public const float HatCrownRadius      = 6f;        // horizontal cap radius around the socket axis
+	public const float HatCrownDrop        = 4f;        // how far below the socket top the cap reaches
+	public const float HatAbsorbFraction   = 0.5f;      // the hat eats HALF the shot, then it's gone
+
+	public const float WoundSaturation   = 0.82f;       // peripheral desaturation while wounded
+	public const float WoundGradeLerpRate = 3f;         // how fast the wound grade eases in/out
 
 	// Point-end ceremony
 	public const float CeremonyHold      = 3.0f;        // bell → call → tableau → next point
@@ -138,21 +161,36 @@ public static class Tuning
 	public const float ReckoningWarning  = 75f;         // bell warning at T-15
 	public const float ReckoningGrace    = 6f;          // time to reach the resolve volume
 	public const float ReckoningTickDmg  = 10f;         // per second outside the volume after grace
+	public const float ReckoningSuddenDeath = 12f;      // phase seconds: the resolve volume COLLAPSES —
+	                                                    // pressure then applies to EVERYONE so a mutual
+	                                                    // stand-in at the heart can never hang the match
 	public const float ChangeoverTime    = 45f;         // [LAW] after odd games — the adaptation window
 	public const float SetBreakTime      = 90f;
 	public const float ApproachFreeze    = 1.5f;        // both players locked at gates, "ten paces" beat
 	public const float InitiativePickTime= 10f;         // Hour + gate selection window
+	public const float MatchEndHold      = 8f;          // victory ceremony before the session returns to lobby
 
 	// ─────────────────────────────────────────────────────────────
 	// TRICKS — Design Doc §IV (one per point)
 	// ─────────────────────────────────────────────────────────────
 	public const float CoinThrowSpeed    = 700f;
+	public const float CoinThrowLift     = 120f;        // upward kick on the toss
 	public const float CoinSoundRadius   = 900f;        // footstep-class report where it lands
+	public const float CoinLandDestroyDelay = 4f;       // coin lingers briefly after it lands
+	public const float VialThrowSpeed    = 500f;
+	public const float VialThrowLift     = 100f;
 	public const float VialSmokeLife     = 3.5f;
 	public const float VialSmokeRadius   = 90f;
 	public const float KnifeSpeed        = 1400f;
+	public const float KnifeGravity      = 200f;        // gentle arc on the thrown blade
+	public const float KnifeLifetime     = 3f;          // seconds before a missed knife despawns
 	public const float KnifeBodyDamage   = 25f;         // lethal ONLY on perfect hit [LAW]
 	public const float KnifeWindup       = 0.35f;
+
+	public const float TrickThrowOffset  = 20f;         // spawn ahead of the eye (coin / vial)
+	public const float TrickKnifeOffset  = 24f;
+	public const float TrickCoinRadius   = 1.5f;
+	public const float TrickVialRadius   = 2f;
 
 	// ─────────────────────────────────────────────────────────────
 	// AUDIO LEDGER — Feel Doc §VIII (loudness classes → audible radius, units)
@@ -187,4 +225,14 @@ public static class Tuning
 	// ─────────────────────────────────────────────────────────────
 	public const float TargetElitePerPointWinrate    = 0.75f;  // elite vs novice, per point
 	public const float TargetAdjacentPerPointWinrate = 0.535f; // adjacent percentiles ≈ 52-55%
+
+	// ─────────────────────────────────────────────────────────────
+	// HONESTY AUDITOR — motion-cap slack (net interp + knockback overshoot)
+	// ─────────────────────────────────────────────────────────────
+	public const float AuditSlideSlack     = 20f;
+	public const float AuditStaggerSlack   = 40f;
+	public const float AuditGaitSlack      = 15f;
+	public const float AuditKnockbackSlack = 60f;
+	public const float AuditDrawnSlack     = 25f;
+	public const int   AuditMaxViolations  = 256;  // ring-buffer cap over a long session
 }

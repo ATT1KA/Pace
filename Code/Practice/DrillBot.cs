@@ -97,7 +97,7 @@ public sealed class DrillBot : Component, ILedgerEvents
 			RerollTendencies();  // adapts at changeovers — like a human, readably
 			_sinceDecision = 0;
 		}
-		if ( director.Phase is not (MatchPhase.Live or MatchPhase.Reckoning) ) return;
+		if ( director.Phase is not (MatchPhase.Live or MatchPhase.Reckoning) ) { ReleaseBotHolds(); return; }
 
 		var enemy = Enemy( director );
 		if ( enemy is null || !Body.Vitals.Alive ) return;
@@ -125,6 +125,7 @@ public sealed class DrillBot : Component, ILedgerEvents
 
 	void Decide( DuelistController enemy )
 	{
+		ReleaseBotHolds(); // default: not aiming/fanning unless BotFight re-asserts this tick
 		float dist = Body.WorldPosition.Distance( enemy.WorldPosition );
 
 		if ( _canSeeEnemy )
@@ -180,11 +181,22 @@ public sealed class DrillBot : Component, ILedgerEvents
 	{
 		// Plant discipline: composed bots stop before they shoot.
 		bool willPlant = Game.Random.Float() < PlantDiscipline;
-		if ( willPlant && !Body.CountsAsPlanted ) { StopMoving(); return; }
+		if ( willPlant && !Body.CountsAsPlanted ) StopMoving();
 
-		// Beat discipline: composed bots wait for the click.
-		bool onBeat = Game.Random.Float() < BeatDiscipline;
-		if ( onBeat && !BotBeatReady() ) return;
+		// Fanning form closes and bursts at short range: hip-fire, never aimed.
+		bool fan = Gun.FormDef.CanFan && dist <= Gun.FormDef.EffectiveRange && _aggression > 0.6f;
+
+		// AIM: holding Aim is how the bot reaches the planted-aimed 0-degree TRUE cone that
+		// humans get. Without ever holding Aim the bot was permanently stuck at hip accuracy.
+		Body.BotHold( "Aim", willPlant && !fan );
+		// Sustain an in-progress fan — TickFan continues only while Attack is held down.
+		Body.BotHold( "Attack", fan && Gun.IsFanning );
+		if ( fan && Gun.IsFanning ) return; // let the current burst play out
+
+		// Beat discipline: composed bots wait for the true beat — a REAL check now.
+		if ( !BotBeatReady() && Game.Random.Float() < BeatDiscipline ) return;
+		// If aiming, wait for the raise to settle so the shot is actually TRUE.
+		if ( willPlant && !fan && !Gun.IsAimSettled ) return;
 
 		if ( _sinceDecision < ReactionDelay * 0.6f ) return;
 		_sinceDecision = 0;
@@ -192,10 +204,21 @@ public sealed class DrillBot : Component, ILedgerEvents
 		// aim jitter — human hands, not an aimbot
 		var jitter = Vector3.Random * AimJitterDeg * 0.01f;
 		FaceToward( _enemyPos + Vector3.Up * 44f + jitter * 100f );
-		SimulatePress( "Attack" );
+
+		if ( fan ) Body.BotHold( "Attack", true ); // held as the burst begins
+		SimulatePress( "Attack" );                 // the trigger edge: fires, or starts the fan
 	}
 
-	bool BotBeatReady() => true; // Revolver enforces bloom on early fire; the knob is whether we WAIT (BeatDiscipline gate above)
+	// Firing on the beat means earliness 0 (no slip-hammer bloom). The Revolver owns the
+	// beat clock; the bot reads it and CHOOSES to wait (weighted by BeatDiscipline) — it
+	// never bypasses the bloom, exactly like a disciplined human.
+	bool BotBeatReady() => Gun.BeatReady;
+
+	void ReleaseBotHolds()
+	{
+		Body.BotHold( "Aim", false );
+		Body.BotHold( "Attack", false );
+	}
 
 	// ── Movement / facing plumbing (drives the same controller humans use) ──
 	// The bot writes to a virtual input layer on the controller — one body,

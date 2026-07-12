@@ -70,13 +70,26 @@ public sealed class DuelistController : Component
 	public bool IsBot => Components.Get<DrillBot>() is not null;
 	Vector3 _botWish;
 	readonly System.Collections.Generic.HashSet<string> _botHeld = new();
-	readonly System.Collections.Generic.HashSet<string> _botPressed = new();
+	// Double-buffered press edges. The bot queues into _botPressedNext; the controller
+	// activates them (swap) once at the top of OnFixedUpdate. Reads are idempotent
+	// (Contains, not Remove), so a press is visible to EVERY ActionPressed read within
+	// the tick — movement AND Revolver — instead of being consumed by the first reader.
+	// (The old Remove() consumed the press on first read: bots couldn't mantle because
+	// SimulateWalk reads "Jump" twice, and reload-interrupt raced the fire read.)
+	System.Collections.Generic.HashSet<string> _botPressed = new();
+	System.Collections.Generic.HashSet<string> _botPressedNext = new();
 
 	public void BotMove( Vector3 dir ) => _botWish = dir;
-	public void BotPress( string action ) => _botPressed.Add( action );
+	public void BotPress( string action ) => _botPressedNext.Add( action );
 	public void BotHold( string action, bool held ) { if ( held ) _botHeld.Add( action ); else _botHeld.Remove( action ); }
 
-	public bool ActionPressed( string a ) => IsBot ? _botPressed.Remove( a ) : (IsLocalControlled && Input.Pressed( a ));
+	void BotActivatePresses()
+	{
+		(_botPressed, _botPressedNext) = (_botPressedNext, _botPressed);
+		_botPressedNext.Clear();
+	}
+
+	public bool ActionPressed( string a ) => IsBot ? _botPressed.Contains( a ) : (IsLocalControlled && Input.Pressed( a ));
 	public bool ActionDown( string a )    => IsBot ? (_botHeld.Contains( a ) || _botPressed.Contains( a )) : (IsLocalControlled && Input.Down( a ));
 	public bool ActionReleased( string a )=> !IsBot && IsLocalControlled && Input.Released( a );
 
@@ -131,7 +144,11 @@ public sealed class DuelistController : Component
 	protected override void OnFixedUpdate()
 	{
 		if ( IsProxy ) return;
-		if ( State is MoveState.Dead or MoveState.Locked ) { Body.Velocity = Body.Velocity.WithZ( Body.Velocity.z ); return; }
+		// Activate this tick's bot presses before any reader (movement + Revolver) runs.
+		if ( IsBot ) BotActivatePresses();
+		// Locked (gate freeze) / Dead: fully stationary. The previous WithZ(Velocity.z) was
+		// a no-op, so a body that died mid-run kept its horizontal velocity.
+		if ( State is MoveState.Dead or MoveState.Locked ) { Body.Velocity = Vector3.Zero; return; }
 
 		switch ( State )
 		{

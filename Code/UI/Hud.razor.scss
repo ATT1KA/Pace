@@ -60,7 +60,7 @@
 /* ── Crosshair: an honest dot that breathes with the cone ── */
 .crosshair {
 	position: absolute; left: 50%; top: 50%;
-	transform: translate(-50% -50%);
+	transform: translate(-50%, -50%); /* was missing the comma — some CSS parsers drop the whole rule */
 	border: 1px solid rgba(239, 230, 208, 0.35);
 	border-radius: 50%;
 	justify-content: center; align-items: center;
