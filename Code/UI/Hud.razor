@@ -1,0 +1,216 @@
+@using Sandbox
+@using Sandbox.UI
+@using System
+@inherits PanelComponent
+@namespace TenPaces.UI
+
+<root class="hud @(Phase.ToString().ToLower())">
+
+    @* ── The tennis scorecard — one of exactly two persistent elements [LAW] ── *@
+    <div class="scorecard">
+        <div class="row @(Initiative == TennisScore.Side.A ? "initiative" : "")">
+            <span class="name">@NameA</span>
+            @foreach ( var set in SetCells( TennisScore.Side.A ) ) { <span class="set">@set</span> }
+            <span class="games">@Score.Games[0]</span>
+            <span class="points">@PointCell( TennisScore.Side.A )</span>
+        </div>
+        <div class="row @(Initiative == TennisScore.Side.B ? "initiative" : "")">
+            <span class="name">@NameB</span>
+            @foreach ( var set in SetCells( TennisScore.Side.B ) ) { <span class="set">@set</span> }
+            <span class="games">@Score.Games[1]</span>
+            <span class="points">@PointCell( TennisScore.Side.B )</span>
+        </div>
+        @if ( Stakes.Any )
+        {
+            <div class="stakes @(Stakes.IsMatchPoint ? "grave" : "")">@StakesLine()</div>
+        }
+    </div>
+
+    @* ── Shell pips — the second persistent element [LAW] ── *@
+    <div class="shellpips">
+        @for ( int i = 0; i < Tuning.CylinderCapacity; i++ )
+        {
+            <span class="pip @(i < LoadedShells ? "loaded" : "empty")"></span>
+        }
+        @if ( IsReloading ) { <span class="reloading">●</span> }
+    </div>
+
+    @* ── Umpire ticker — the match's voice, mirrored as text ── *@
+    @if ( !string.IsNullOrEmpty( _umpireLine ) && _umpireLineAge < 4f )
+    {
+        <div class="umpire @_umpireTone.ToString().ToLower()">@_umpireLine</div>
+    }
+
+    @* ── Crosshair: a minimal dot that breathes with the TRUE accuracy cone ── *@
+    @if ( Phase is MatchPhase.Live or MatchPhase.Reckoning && LocalDuelist is not null && LocalDuelist.Vitals.Alive )
+    {
+        <div class="crosshair" style="width:@(ConePixels)px; height:@(ConePixels)px; opacity:@(CrosshairOpacity)">
+            <div class="dot"></div>
+        </div>
+    }
+
+    @* ── Training frame — sheds as the player "goes clean" ── *@
+    @if ( TrainingFrame && LocalDuelist is not null )
+    {
+        <div class="training">
+            <span class="gait">@LocalDuelist.CurrentGait</span>
+            <span class="plant @(LocalDuelist.IsPlanted ? "on" : "")">@(LocalDuelist.IsPlanted ? "PLANTED" : "moving")</span>
+            <span class="hand">@LocalDuelist.Gun.HandState</span>
+        </div>
+    }
+
+    @* ── Phase overlays ── *@
+    @if ( Phase == MatchPhase.Lobby )
+    {
+        <div class="overlay lobby">
+            <h1>TEN PACES</h1>
+            <p>Press <b>E</b> to stand ready. First two ready duelists take the ground.</p>
+        </div>
+    }
+    @if ( Phase == MatchPhase.InitiativePick && _iAmPicking )
+    {
+        <div class="overlay pick">
+            <h2>You hold Initiative</h2>
+            <div class="choices">
+                <button onclick=@(() => Pick( GroundHour.HighNoon, 0 ))>High Noon — Gate I</button>
+                <button onclick=@(() => Pick( GroundHour.HighNoon, 1 ))>High Noon — Gate II</button>
+                <button onclick=@(() => Pick( GroundHour.HighNoon, 2 ))>High Noon — Gate III</button>
+                <button onclick=@(() => Pick( GroundHour.Dusk, 0 ))>Dusk — Gate I</button>
+                <button onclick=@(() => Pick( GroundHour.Dusk, 1 ))>Dusk — Gate II</button>
+                <button onclick=@(() => Pick( GroundHour.Dusk, 2 ))>Dusk — Gate III</button>
+            </div>
+        </div>
+    }
+    @if ( Phase == MatchPhase.Changeover )
+    {
+        <div class="overlay changeover">
+            <h2>Changeover</h2>
+            <p>@TimeLeft("Switch sides. Change your Form, or bank your patterns.")</p>
+            <div class="choices">
+                <button onclick=@(() => SwapForm( FormId.Duelist ))>Duelist</button>
+                <button onclick=@(() => SwapForm( FormId.Deadeye ))>Deadeye</button>
+                <button onclick=@(() => SwapForm( FormId.Fanning ))>Fanning</button>
+            </div>
+            <div class="choices">
+                <button onclick=@(() => SwapTrick( TrickId.Coin ))>Coin</button>
+                <button onclick=@(() => SwapTrick( TrickId.Vial ))>Vial</button>
+                <button onclick=@(() => SwapTrick( TrickId.Knife ))>Knife</button>
+            </div>
+        </div>
+    }
+    @if ( Phase == MatchPhase.MatchEnd )
+    {
+        <div class="overlay matchend">
+            <h1>@_matchEndLine</h1>
+            <p>The Record has been written.</p>
+        </div>
+    }
+
+</root>
+
+@code
+{
+    // Wound vignette, hitstop, flash effects live in a sibling ScreenEffects
+    // component (render hooks); this panel is INFORMATION only — near-zero [LAW].
+
+    MatchDirector Director => MatchDirector.Instance;
+    MatchPhase Phase => Director?.Phase ?? MatchPhase.Lobby;
+    TennisScore Score => Director?.ClientScore ?? new TennisScore();
+    TennisScore.Side Initiative => Score.Initiative;
+    PointStakes Stakes => Score.NextPointStakes();
+    string NameA => Director?.NameOf( TennisScore.Side.A ) ?? "—";
+    string NameB => Director?.NameOf( TennisScore.Side.B ) ?? "—";
+
+    DuelistController LocalDuelist =>
+        Scene.GetAllComponents<DuelistController>().FirstOrDefault( d => d.IsLocalControlled );
+
+    int LoadedShells => LocalDuelist?.Gun.Cylinder.Loaded ?? 0;
+    bool IsReloading => LocalDuelist?.Gun.Cylinder.IsReloading ?? false;
+    bool TrainingFrame => Cookie.Get( "tp.trainingframe", true );
+
+    string _umpireLine = "";
+    UmpireTone _umpireTone;
+    TimeSince _umpireLineAge = 999;
+    bool _iAmPicking;
+    string _matchEndLine = "";
+
+    float ConePixels
+    {
+        get
+        {
+            var d = LocalDuelist;
+            if ( d is null ) return 6f;
+            float deg = d.Gun.CurrentConeDegrees( 0f );
+            return 6f + deg * 14f; // breathes with the honest cone — never enhanced
+        }
+    }
+    float CrosshairOpacity => LocalDuelist?.Gun.HandState == HandState.Drawn ? 0.9f : 0.25f;
+
+    string PointCell( TennisScore.Side s )
+    {
+        if ( Score.InTiebreak ) return Score.Points[(int)s].ToString();
+        if ( Score.IsDeuce ) return "40";
+        if ( Score.AdvantageTo == s ) return "AD";
+        if ( Score.AdvantageTo == TennisScore.Other( s ) ) return "40";
+        return Score.Points[(int)s] switch { 0 => "0", 1 => "15", 2 => "30", _ => "40" };
+    }
+
+    IEnumerable<string> SetCells( TennisScore.Side s )
+    {
+        foreach ( var set in Score.SetHistory )
+            yield return (s == TennisScore.Side.A ? set.a : set.b).ToString();
+    }
+
+    string StakesLine() =>
+        Stakes.IsMatchPoint ? "MATCH POINT" :
+        Stakes.IsSetPoint ? "SET POINT" :
+        Stakes.IsBreakPoint ? "BREAK POINT" : "GAME POINT";
+
+    string TimeLeft( string suffix )
+    {
+        float left = MathF.Max( 0, (Director?.PhaseEndsAt ?? 0) - Time.Now );
+        return $"{left:F0}s — {suffix}";
+    }
+
+    void Pick( GroundHour hour, int gate )
+    {
+        Director?.SubmitInitiativePick( hour, gate );
+        _iAmPicking = false;
+    }
+
+    void SwapForm( FormId f ) => LocalDuelist?.Gun.SetLoadout( f, LocalDuelist.Gun.Trick );
+    void SwapTrick( TrickId t ) => LocalDuelist?.Gun.SetLoadout( LocalDuelist.Gun.Form, t );
+
+    protected override void OnTreeFirstBuilt()
+    {
+        // subscribe to scene events via a listener child component
+        var listener = Components.GetOrCreate<HudListener>();
+        listener.Hud = this;
+    }
+
+    public void ShowUmpire( string line, UmpireTone tone ) { _umpireLine = line; _umpireTone = tone; _umpireLineAge = 0; StateHasChanged(); }
+    public void ShowInitiativePick( Guid holderId )
+    {
+        _iAmPicking = LocalDuelist is not null && LocalDuelist.GameObject.Id == holderId;
+        StateHasChanged();
+    }
+    public void ShowMatchEnd( Guid winnerId )
+    {
+        var winner = Scene.Directory.FindByGuid( winnerId );
+        _matchEndLine = $"{winner?.Network.Owner?.DisplayName ?? "The victor"} takes the match.";
+        StateHasChanged();
+    }
+
+    protected override int BuildHash() => HashCode.Combine(
+        Phase, Director?.ScoreJson, LoadedShells, IsReloading,
+        LocalDuelist?.IsPlanted, (int)(Time.Now * 4) );
+}
+
+/// <summary> Bridges scene events into the panel. </summary>
+public sealed class HudListener : Component, IUmpireEvents, IMatchEvents
+{
+    public Hud Hud;
+    public void OnUmpireCall( string line, UmpireTone tone ) => Hud?.ShowUmpire( line, tone );
+    public void OnInitiativePickStarted( Guid holderId ) => Hud?.ShowInitiativePick( holderId );
+    public void OnMatchEnd( Guid winnerId ) => Hud?.ShowMatchEnd( winnerId );
+}

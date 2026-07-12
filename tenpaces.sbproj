@@ -1,0 +1,57 @@
+{
+  "Title": "Ten Paces",
+  "Type": "game",
+  "Org": "ancillary",
+  "Ident": "tenpaces",
+  "Schema": 1,
+  "IncludeSourceFiles": true,
+  "Resources": "/Assets/*\n/Code/UI/*",
+  "PackageReferences": [],
+  "EditorReferences": null,
+  "Metadata": {
+    "MaxPlayers": 8,
+    "MinPlayers": 1,
+    "TickRate": 128,
+    "GameNetworkType": "Multiplayer",
+    "MapSelect": "Official",
+    "MapList": [ "ancillary.ground_mainstreet", "ancillary.ground_chapel" ],
+    "RankType": "None",
+    "PerMapRanking": false,
+    "LeaderboardType": "None",
+    "ProjectTemplate": null,
+    "CsProjName": "TenPaces",
+    "StartupScene": "/Assets/scenes/lobby.scene",
+    "Compiler": {
+      "RootNamespace": "TenPaces",
+      "DefineConstants": "SANDBOX;ADDON;DEBUG",
+      "NoWarn": "1701;1702;1591;"
+    },
+    "ControlModes": {
+      "Keyboard": true,
+      "Gamepad": true
+    },
+    "InputSettings": {
+      "Actions": [
+        { "Name": "Forward",    "KeyboardCode": "W",          "GamepadCode": "None",          "GroupName": "Movement" },
+        { "Name": "Backward",   "KeyboardCode": "S",          "GamepadCode": "None",          "GroupName": "Movement" },
+        { "Name": "Left",       "KeyboardCode": "A",          "GamepadCode": "None",          "GroupName": "Movement" },
+        { "Name": "Right",      "KeyboardCode": "D",          "GamepadCode": "None",          "GroupName": "Movement" },
+        { "Name": "Jump",       "KeyboardCode": "space",      "GamepadCode": "A",             "GroupName": "Movement" },
+        { "Name": "Slide",      "KeyboardCode": "ctrl",       "GamepadCode": "B",             "GroupName": "Movement" },
+        { "Name": "SoftStep",   "KeyboardCode": "shift",      "GamepadCode": "LeftJoystickButton", "GroupName": "Movement" },
+        { "Name": "Attack",     "KeyboardCode": "mouse1",     "GamepadCode": "RightTrigger",  "GroupName": "Gunplay" },
+        { "Name": "Aim",        "KeyboardCode": "mouse2",     "GamepadCode": "LeftTrigger",   "GroupName": "Gunplay" },
+        { "Name": "DrawHolster","KeyboardCode": "Q",          "GamepadCode": "Y",             "GroupName": "Gunplay" },
+        { "Name": "Reload",     "KeyboardCode": "R",          "GamepadCode": "X",             "GroupName": "Gunplay" },
+        { "Name": "Whip",       "KeyboardCode": "V",          "GamepadCode": "RightJoystickButton", "GroupName": "Gunplay" },
+        { "Name": "Trick",      "KeyboardCode": "F",          "GamepadCode": "RightShoulder", "GroupName": "Gunplay" },
+        { "Name": "CylinderCheck","KeyboardCode": "T",        "GamepadCode": "DpadNorth",     "GroupName": "Flourish" },
+        { "Name": "Spin",       "KeyboardCode": "G",          "GamepadCode": "DpadEast",      "GroupName": "Flourish" },
+        { "Name": "HammerThumb","KeyboardCode": "H",          "GamepadCode": "DpadWest",      "GroupName": "Flourish" },
+        { "Name": "TipHat",     "KeyboardCode": "B",          "GamepadCode": "DpadSouth",     "GroupName": "Flourish" },
+        { "Name": "Ready",      "KeyboardCode": "E",          "GamepadCode": "A",             "GroupName": "Match" },
+        { "Name": "Scoreboard", "KeyboardCode": "tab",        "GamepadCode": "SwitchLeftMenu","GroupName": "Match" }
+      ]
+    }
+  }
+}
